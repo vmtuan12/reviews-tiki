@@ -2,3 +2,4 @@ __pycache__/
 test*
 .env
 tiki_category.csv
+tiki_cate_new.csv
