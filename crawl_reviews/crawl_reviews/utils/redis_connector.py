@@ -1,5 +1,5 @@
 from redis import Redis
-from crawl_reviews.utils.tiki_utils import get_full_set_category_id, get_category_range
+from crawl_reviews.utils.tiki_utils import get_full_category_id, get_category_range
 
 class RedisConnector:
     _instance = None
@@ -27,7 +27,7 @@ class RedisConnector:
         done_category_set = self.redis_client.smembers(self.CATEGORY_DONE)
 
         cate_range = get_category_range(spider_id=spider_id)
-        set_category = get_full_set_category_id()[cate_range[0]:cate_range[1]]
+        set_category = get_full_category_id(is_set=False)[cate_range[0]:cate_range[1]]
 
         return list(set_category - done_category_set)
     
