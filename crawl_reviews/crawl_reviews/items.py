@@ -6,7 +6,17 @@
 import scrapy
 
 
-class CrawlReviewsItem(scrapy.Item):
-    # define the fields for your item here like:
-    # name = scrapy.Field()
+class Product(scrapy.Item):
+    pass
+
+class Shop(scrapy.Item):
+    pass
+
+class User(scrapy.Item):
+    pass
+
+class Review(scrapy.Item):
+    pass
+
+class ReviewChild(scrapy.Item):
     pass
