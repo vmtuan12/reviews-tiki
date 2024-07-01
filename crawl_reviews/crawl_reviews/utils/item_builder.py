@@ -37,19 +37,11 @@ def product(source: dict) -> Product:
     result["id"] = data["id"]
     result["name"] = data["name"]
     result["url"] = BASE_URL + data["url_path"]
-    result["price"] = data["original_price"]
-
-    if source.get("from_detail") == True:
-        result["shop_id"] = _handle_exception_retrieving_value(data, "current_seller", "id")
-        result["spid"] = _handle_exception_retrieving_value(data, "current_seller", "product_id")
-        result["sold"] = data["all_time_quantity_sold"]
-        result["brand"] = _handle_exception_retrieving_value(data, "brand", "name")
-
-    else:
-        result["shop_id"] = data["seller_id"]
-        result["spid"] = data["seller_product_id"]
-        result["sold"] = _handle_exception_retrieving_value(data, "quantity_sold", "value")
-        result["brand"] = _handle_exception_retrieving_value(data, "brand_name")
+    result["price"] = _handle_exception_retrieving_value(data, "original_price")
+    result["brand"] = _handle_exception_retrieving_value(data, "brand_name")
+    result["shop_id"] = data["seller_id"]
+    result["spid"] = data["seller_product_id"]
+    result["sold"] = _handle_exception_retrieving_value(data, "quantity_sold", "value")
 
     return result
         

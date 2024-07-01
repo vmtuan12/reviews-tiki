@@ -41,20 +41,36 @@ def get_category_range(spider_id: int) -> tuple:
     
     return (chunk_size[spider_id], chunk_size[spider_id] + chunk_size[spider_id + 1])
 
-def api_list_item_by_category(category_id: int | str, url_key: str, page: int, limit=40) -> str:
-    return f"https://tiki.vn/api/personalish/v1/blocks/listings?limit={limit}&include=advertisement&aggregations=2&version=home-persionalized&urlKey={url_key}&category={category_id}&page={page}"
+def api_headers_list_item_by_category(category_id: int | str, url_key: str, page: int, limit=40) -> tuple[str, dict]:
+    api = f"https://tiki.vn/api/personalish/v1/blocks/listings?limit={limit}&include=advertisement&aggregations=2&version=home-persionalized&urlKey={url_key}&category={category_id}&page={page}"
+    headers = basic_headers()
 
-def api_shop_info(seller_id: int) -> str:
-    return f'https://api.tiki.vn/product-detail/v2/widgets/seller?seller_id={seller_id}&platform=desktop&version=3'
+    return (api, headers)
 
-def api_list_product_in_shop(shop_name: str, page: int) -> str:
-    return f'https://api.tiki.vn/v2/seller/stores/{shop_name}/products?limit=1&page={page}'
+def api_headers_shop_info(seller_id: int) -> tuple[str, dict]:
+    api = f'https://api.tiki.vn/product-detail/v2/widgets/seller?seller_id={seller_id}&platform=desktop&version=3'
+    headers = basic_headers()
 
-def api_product_detail(product_id: int) -> str:
-    return f'https://tiki.vn/api/v2/products/{product_id}?platform=web'
+    return (api, headers)
 
-def api_reviews(product_id: int, spid: int, seller_id: int, page: int, limit=5) -> str:
-    f'https://tiki.vn/api/v2/reviews?limit={limit}&include=comments,contribute_info,attribute_vote_summary&sort=score%7Cdesc,id%7Cdesc,stars%7Call&page={page}&spid={spid}&product_id={product_id}&seller_id={seller_id}'
+def api_headers_list_product_in_shop(shop_id: str, cursor: int, limit=40) -> tuple[str, dict]:
+    api = f'https://api.tiki.vn/seller-store/v2/collections/6/products?cursor={cursor}&limit={limit}&seller_id={shop_id}'
+    headers = basic_headers()
+    headers["X-Source"] = "local"
+
+    return (api, headers)
+
+def api_headers_product_detail(product_id: int) -> tuple[str, dict]:
+    api = f'https://tiki.vn/api/v2/products/{product_id}?platform=web'
+    headers = basic_headers()
+
+    return (api, headers)
+
+def api_headers_reviews(product_id: int, spid: int, seller_id: int, page: int, limit=20) -> tuple[str, dict]:
+    api = f'https://tiki.vn/api/v2/reviews?limit={limit}&include=comments,contribute_info,attribute_vote_summary&sort=score%7Cdesc,id%7Cdesc,stars%7Call&page={page}&spid={spid}&product_id={product_id}&seller_id={seller_id}'
+    headers = basic_headers()
+
+    return (api, headers)
 
 def basic_headers() -> dict:
     return {
