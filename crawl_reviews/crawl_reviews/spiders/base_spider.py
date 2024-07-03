@@ -61,20 +61,46 @@ class BaseSpider(scrapy.Spider):
         for product in set_remaining_product_wait_comment:
             product_id, sp_id = product.split("&")
 
-            current_review_page = 1
-            self.set_review_page.add(product_id)
+            pages = self.redis_conn.get_comment_page_set(spider_id=self.spider_id, product_id=product_id, sp_id=sp_id)
 
-            while (product_id in self.set_review_page):
-                review_api, review_headers = api_headers_reviews(product_id=product_id, spid=sp_id, page=current_review_page)
+            if len(pages == 0):
+                current_review_page = 1
+                self.set_review_page.add(product_id)
 
-                yield scrapy.Request(url=review_api,
-                                    headers=review_headers,
-                                    callback=self.parse_comment,
-                                    meta={"from_remaining": True, "page": current_review_page})
+                while (product_id in self.set_review_page):
+                    review_api, review_headers = api_headers_reviews(product_id=product_id, spid=sp_id, page=current_review_page)
+
+                    yield scrapy.Request(url=review_api,
+                                        headers=review_headers,
+                                        callback=self.parse_comment,
+                                        meta={"from_remaining": False, "page": current_review_page})
+                    
+                    current_review_page += 1
                 
-                current_review_page += 1
-            
-            self._review_page_remove_id(product_id)
+                self._review_page_remove_id(product_id)
+
+            else:
+                for p in pages:
+                    int_page = int(p)
+                    review_api, review_headers = api_headers_reviews(product_id=product_id, spid=sp_id, page=int_page)
+
+                    yield scrapy.Request(url=review_api,
+                                        headers=review_headers,
+                                        callback=self.parse_comment,
+                                        meta={"from_remaining": True, "page": int_page})
+                    
+        remaining_cursor_shops = self.redis_conn.get_remaining_cursor_shops(spider_id=self.spider_id)
+        for shop_cursor in remaining_cursor_shops:
+            shop_id, cursor_set = shop_cursor
+
+            for cursor in cursor_set:
+                int_cursor = int(cursor)
+                api, headers = api_headers_list_product_in_shop(cursor=int_cursor, shop_id=shop_id)
+
+                yield scrapy.Request(url=api,
+                                    headers=headers,
+                                    callback=self.parse_list_product,
+                                    meta={"from_cate": False, "cursor": int_cursor, "shop_id": shop_id, "from_remaining": True})
 
         for page in ready_scrape_page_set:
             page_int = int(page)
@@ -199,13 +225,12 @@ class BaseSpider(scrapy.Spider):
             
     def _parse_list_from_shop(self, response_body: dict, cursor: int, shop_id: int):
         response_data = response_body.get("data")
+        from_remaining = response_body.get("from_remaining")
 
-        if self.redis_conn.get_last_cursor_shop(shop_id=shop_id, spider_id=self.spider_id) == None:
-            mod = response_body.get("page").get("total") % self.limit_product_shop_per_page
-            last_cursor = response_body.get("page").get("total") - (mod if mod != 0 else self.limit_product_shop_per_page)
-            self.redis_conn.set_last_cursor_shop(shop_id=shop_id,
+        if from_remaining != True and len(self.redis_conn.get_cursor_shop_set(shop_id=shop_id, spider_id=self.spider_id)) == 0:
+            self.redis_conn.add_cursor_to_shop_set(shop_id=shop_id,
                                                  spider_id=self.spider_id,
-                                                 cursor=last_cursor)
+                                                 total=response_body.get("page").get("total"))
 
         if response_data == None or len(response_data) == 0:
             self._shop_page_remove_id(response_data["id"])
@@ -214,7 +239,7 @@ class BaseSpider(scrapy.Spider):
         for item in response_data:
             yield generate_item(source={"data": item, "from_cate": False}, item_type=Product)
 
-        self.redis_conn.add_cursor_to_shop_set(shop_id=shop_id, cursor=cursor, spider_id=self.spider_id)
+        self.redis_conn.delete_cursor_from_shop_set(shop_id=shop_id, cursor=cursor, spider_id=self.spider_id)
 
     def _shop_page_remove_id(self, id: int):
         try:
