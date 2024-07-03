@@ -5,6 +5,7 @@ import re
 import json
 from crawl_reviews.utils.redis_connector import RedisConnector
 from crawl_reviews.utils.tiki_utils import *
+# from crawl_reviews.utils.save_data_utils import *
 from crawl_reviews.utils.item_builder import generate_item
 from crawl_reviews.items import Product, Shop, Review, User, ReviewChild
 
@@ -121,26 +122,27 @@ class BaseSpider(scrapy.Spider):
         response_data = response_body.get("data")
 
         self.category_page_limit = response_paging["last_page"]
+        self.redis_conn.set_last_page_category(cate_id=cate_id, last_page=response_paging["last_page"])
 
         if response_data == None or len(response_data) == 0:
             return
         
         current_page = response_paging["current_page"]
-        self.redis_conn.add_page_to_cate_page_set(cate_id=cate_id, page=current_page)
 
         for item in response_data:
             yield generate_item(source={"data": item, "from_cate": True}, item_type=Product)
             self.redis_conn.save_scraped_product_wait_comment(spider_id=self.spider_id,
                                                               product_id=item["id"],
                                                               sp_id=item["seller_product_id"])
+            
+        self.redis_conn.add_page_to_cate_page_set(cate_id=cate_id, page=current_page)
 
+        for item in response_data:
             api, headers = api_headers_shop_info(seller_id=item.get("seller_id"))
         
             yield scrapy.Request(url=api,
                                 headers=headers,
                                 callback=self.parse_shop_info)
-            
-        self.redis_conn.remove_page_from_set(cate_id=cate_id, page=current_page)
             
     def _parse_list_from_shop(self, response_body: dict, cate_id: int):
         response_data = response_body.get("data")

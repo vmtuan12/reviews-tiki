@@ -6,9 +6,10 @@ class RedisConnector:
 
     SCRAPED_PRODUCT_WAIT_COMMENT = "scraped-products-wait-comment:"
     READY_CATEGORY_PREFIX = "category-scraping-page:"
-    CATEGORY_DONE = "category-done:"
+    CATEGORY_DONE = "category-done"
     CURRENT_PAGE_NUMBER_CATEGORY = "page-number:"
     SHOP_PRODUCT_PAGE = "shop:"
+    LAST_PAGE_CATEGORY = "last-page-category:"
 
     def __new__(cls):
         if cls._instance is None:
@@ -42,23 +43,45 @@ class RedisConnector:
 
         return None
     
+    def set_last_page_category(self, cate_id: int, last_page: int):
+        self.redis_client.set(f"{self.LAST_PAGE_CATEGORY}{cate_id}", last_page)
+    
+    def get_last_page_category(self, cate_id: int) -> int:
+        return self.redis_client.get(f"{self.LAST_PAGE_CATEGORY}{cate_id}")
+    
+    def delete_last_page_category(self, cate_id: int) -> int:
+        return self.redis_client.delete(f"{self.LAST_PAGE_CATEGORY}{cate_id}")
+    
     def add_page_to_cate_page_set(self, cate_id: int, page: int):
-        self.redis_client.sadd(f"{self.READY_CATEGORY_PREFIX}:{cate_id}", page)
+        self.redis_client.sadd(f"{self.READY_CATEGORY_PREFIX}{cate_id}", page)
 
-    def remove_page_from_set(self, cate_id: int, page: int):
-        self.redis_client.srem(f"{self.READY_CATEGORY_PREFIX}:{cate_id}", page)
+        if len(self.get_scraped_pages_in_category()) == self.get_last_page_category(cate_id=cate_id):
+            self.delete_category_page_key(cate_id=cate_id)
+            self.delete_last_page_category(cate_id=cate_id)
+            self.add_category_done(cate_id=cate_id)
 
-    def get_remaining_pages_in_category(self, cate_id: int) -> set:
-        return self.redis_client.smembers(f"{self.READY_CATEGORY_PREFIX}:{cate_id}")
+    # def remove_page_from_set(self, cate_id: int, page: int):
+    #     self.redis_client.srem(f"{self.READY_CATEGORY_PREFIX}:{cate_id}", page)
+
+    def get_scraped_pages_in_category(self, cate_id: int) -> set:
+        return self.redis_client.smembers(f"{self.READY_CATEGORY_PREFIX}{cate_id}")
 
     def delete_category_page_key(self, cate_id: int):
-        self.redis_client.delete(f"{self.READY_CATEGORY_PREFIX}:{cate_id}")
+        self.redis_client.delete(f"{self.READY_CATEGORY_PREFIX}{cate_id}")
+
+    def add_category_done(self, cate_id: int):
+        self.redis_client.sadd(self.CATEGORY_DONE, cate_id)
     
     def save_scraped_product_wait_comment(self, spider_id: int, product_id: int, sp_id: int):
-        self.redis_client.sadd(f"{self.SCRAPED_PRODUCT_WAIT_COMMENT}:{spider_id}", f"{product_id}&{sp_id}")
+        self.redis_client.sadd(f"{self.SCRAPED_PRODUCT_WAIT_COMMENT}{spider_id}", f"{product_id}&{sp_id}")
     
     def delete_scraped_product_wait_comment(self, spider_id: int, product_id: int, sp_id: int):
-        self.redis_client.srem(f"{self.SCRAPED_PRODUCT_WAIT_COMMENT}:{spider_id}", f"{product_id}&{sp_id}")
+        self.redis_client.srem(f"{self.SCRAPED_PRODUCT_WAIT_COMMENT}{spider_id}", f"{product_id}&{sp_id}")
     
     def get_scraped_product_wait_comment(self, spider_id: int) -> set:
-        self.redis_client.smembers(f"{self.SCRAPED_PRODUCT_WAIT_COMMENT}:{spider_id}")
+        self.redis_client.smembers(f"{self.SCRAPED_PRODUCT_WAIT_COMMENT}{spider_id}")
+
+    def add_page_to_shop_set(self, shop_id: int, page: int):
+        self.redis_client.sadd(f"{self.SHOP_PRODUCT_PAGE}{shop_id}", page)
+
+    
