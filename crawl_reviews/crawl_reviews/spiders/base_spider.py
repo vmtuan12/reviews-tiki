@@ -29,29 +29,60 @@ class BaseSpider(scrapy.Spider):
         if scraping_category_id == None:
             self.choose_category()
         else:
-            ready_scrape_page_set = scraping_category_id
+            ready_scrape_page_set = self.redis_conn.get_remaining_pages_in_category(cate_id=scraping_category_id)
             if len(ready_scrape_page_set) == 0:
                 self.redis_conn.delete_category_key(scraping_category_id)
+                self.redis_conn.add_category_done(scraping_category_id)
 
-            self.crawl_remaining(ready_scrape_page_set)
+                self.start_requests()
+            else:
+                self.crawl_remaining(ready_scrape_page_set=ready_scrape_page_set, category_id=scraping_category_id)
 
     def choose_category(self):
-        chosen_category_id = int(self.redis_conn.get_list_remaining_category_id_by_spider(spider_id=self.spider_id)[0])
+        possible_categories = self.redis_conn.get_list_remaining_category_id_by_spider(spider_id=self.spider_id)
+        if len(possible_categories) == 0:
+            return
+        
+        chosen_category_id = int(possible_categories[0])
         url_key = get_url_key_by_cate_id(chosen_category_id)
 
         current_page = 1
 
-        api, headers = api_headers_list_item_by_category(category_id=chosen_category_id, url_key=url_key, page=current_page)
-
         while (current_page <= self.category_page_limit):
+            api, headers = api_headers_list_item_by_category(category_id=chosen_category_id, url_key=url_key, page=current_page)
             yield scrapy.Request(url=api,
                                 headers=headers,
                                 callback=self.parse_list_product,
                                 meta={"page": current_page, "from_cate": True, "cate_id": chosen_category_id})
             current_page += 1
 
-    def crawl_remaining(self, ready_scrape_page_set: set):
-        pass
+    def crawl_remaining(self, ready_scrape_page_set: set, category_id: int):
+        set_remaining_product_wait_comment = self.redis_conn.get_scraped_product_wait_comment(self.spider_id)
+        for product in set_remaining_product_wait_comment:
+            product_id, sp_id = product.split("&")
+
+            current_review_page = 1
+            self.set_review_page.add(product_id)
+
+            while (product_id in self.set_review_page):
+                review_api, review_headers = api_headers_reviews(product_id=product_id, spid=sp_id, page=current_review_page)
+
+                yield scrapy.Request(url=review_api,
+                                    headers=review_headers,
+                                    callback=self.parse_comment,
+                                    meta={"from_remaining": True, "page": current_review_page})
+                
+                current_review_page += 1
+            
+            self._review_page_remove_id(product_id)
+
+        for page in ready_scrape_page_set:
+            page_int = int(page)
+            api, headers = api_headers_list_item_by_category(category_id=category_id, url_key="", page=page_int)
+            yield scrapy.Request(url=api,
+                                headers=headers,
+                                callback=self.parse_list_product,
+                                meta={"page": page_int, "from_cate": True, "cate_id": category_id})
 
     def parse_list_product(self, response: Response, **kwargs: Any):
         response_body = json.loads(response.text)
@@ -64,20 +95,25 @@ class BaseSpider(scrapy.Spider):
                                        cursor=response.meta.get("cursor"),
                                        shop_id=response.meta.get("shop_id"))
 
+        # item = product
         for item in response_body:
             current_review_page = 1
-            self.set_review_page.add(item["id"])
 
-            while (item["id"] in self.set_review_page):
-                review_api, review_headers = api_headers_reviews(product_id=item["id"], spid=item["seller_product_id"], page=current_review_page)
+            product_id = item["id"]
+            sp_id = item["seller_product_id"]
+            self.set_review_page.add(product_id)
+
+            while (product_id in self.set_review_page):
+                review_api, review_headers = api_headers_reviews(product_id=product_id, spid=sp_id, page=current_review_page)
 
                 yield scrapy.Request(url=review_api,
                                     headers=review_headers,
-                                    callback=self.parse_comment)
+                                    callback=self.parse_comment,
+                                    meta={"product_id": product_id, "sp_id": sp_id, "page": current_review_page})
                 
                 current_review_page += 1
             
-            self._review_page_remove_id(item["id"])
+            self._review_page_remove_id(product_id)
 
     def parse_shop_info(self, response: Response, **kwargs: Any):
         response_body = json.loads(response.text)
@@ -104,10 +140,18 @@ class BaseSpider(scrapy.Spider):
     def parse_comment(self, response: Response, **kwargs: Any):
         response_body = json.loads(response.text)
         response_data = response_body.get("data")
+        response_paging = response_body.get("paging")
 
         if response_data == None or len(response_data) == 0:
             self._review_page_remove_id(response_data["id"])
             return
+        
+        product_id = response.meta.get("product_id")
+        sp_id = response.meta.get("sp_id")
+        comment_page_set = self.redis_conn.get_comment_page_set(spider_id=self.spider_id, product_id=product_id, sp_id=sp_id)
+
+        if response.meta.get("from_remaining") != True and len(comment_page_set) == 0:
+            self.redis_conn.save_comment_page_set(spider_id=self.spider_id, product_id=product_id, sp_id=sp_id, last_page=response_paging["last_page"])
         
         for item in response_data:
             yield generate_item(source=item, item_type=Review)
@@ -116,9 +160,10 @@ class BaseSpider(scrapy.Spider):
                 for child in item["comments"]:
                     yield generate_item(source=child, item_type=ReviewChild)
                     
-            self.redis_conn.delete_scraped_product_wait_comment(spider_id=self.spider_id,
-                                                              product_id=item["product_id"],
-                                                              sp_id=item["spid"])
+        self.redis_conn.delete_page_in_comment_page_set(spider_id=self.spider_id,
+                                                        product_id=product_id,
+                                                        sp_id=sp_id,
+                                                        page=response.meta.get("page"))
             
     def _parse_list_from_cate(self, response_body: dict, cate_id: int):
         response_paging = response_body["paging"]

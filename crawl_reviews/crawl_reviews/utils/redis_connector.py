@@ -7,10 +7,10 @@ class RedisConnector:
     SCRAPED_PRODUCT_WAIT_COMMENT = "scraped-products-wait-comment:"
     READY_CATEGORY_PREFIX = "category-scraping-page:"
     CATEGORY_DONE = "category-done"
-    CURRENT_PAGE_NUMBER_CATEGORY = "page-number:"
     SHOP_PRODUCT_PAGE = "shop-product:"
     SHOP_LAST_CURSOR = "shop-last-cursor:"
     LAST_PAGE_CATEGORY = "last-page-category:"
+    IN_QUEUE_COMMENT_PAGE = "review:"
 
     def __new__(cls):
         if cls._instance is None:
@@ -72,6 +72,12 @@ class RedisConnector:
     def get_scraped_pages_in_category(self, cate_id: int) -> set:
         return self.redis_client.smembers(f"{self.READY_CATEGORY_PREFIX}{cate_id}")
 
+    def get_remaining_pages_in_category(self, cate_id: int) -> set:
+        scraped_pages_set = self.get_scraped_pages_in_category(cate_id=cate_id)
+        full_set = set([str(x) for x in range(1, self.get_last_page_category(cate_id=cate_id) + 1)])
+
+        return full_set - scraped_pages_set
+
     def delete_category_page_key(self, cate_id: int):
         self.redis_client.delete(f"{self.READY_CATEGORY_PREFIX}{cate_id}")
 
@@ -116,5 +122,23 @@ class RedisConnector:
             return result
         
         return int(result)
+    
+    def save_comment_page_set(self, spider_id: int, product_id: int, sp_id: int, last_page: int):
+        for index in range(1, last_page):
+            self.redis_client.sadd(f"{self.IN_QUEUE_COMMENT_PAGE}{spider_id}:{product_id}:{sp_id}", index)
+    
+    def delete_page_in_comment_page_set(self, spider_id: int, product_id: int, sp_id: int, page: int):
+        self.redis_client.srem(f"{self.IN_QUEUE_COMMENT_PAGE}{spider_id}:{product_id}:{sp_id}", page)
+
+        if len(self.get_comment_page_set(spider_id=spider_id, product_id=product_id, sp_id=sp_id)) == 0:
+            self.delete_comment_page_set(spider_id=spider_id, product_id=product_id, sp_id=sp_id)
+            self.delete_scraped_product_wait_comment(spider_id=spider_id, product_id=product_id, sp_id=sp_id)
+
+    def get_comment_page_set(self, spider_id: int, product_id: int, sp_id: int) -> set:
+        return self.redis_client.smembers(f"{self.IN_QUEUE_COMMENT_PAGE}{spider_id}:{product_id}:{sp_id}")
+    
+    def delete_comment_page_set(self, spider_id: int, product_id: int, sp_id: int):
+        self.redis_client.delete(f"{self.IN_QUEUE_COMMENT_PAGE}{spider_id}:{product_id}:{sp_id}")
+    
 
     
