@@ -29,7 +29,7 @@ class BaseSpider(scrapy.Spider):
         if scraping_category_id == None:
             self.choose_category()
         else:
-            ready_scrape_page_set = self.redis_conn.get_remaining_pages_in_category(cate_id=scraping_category_id)
+            ready_scrape_page_set = self.redis_conn.get_in_queue_pages_in_category(cate_id=scraping_category_id)
             if len(ready_scrape_page_set) == 0:
                 self.redis_conn.delete_category_key(scraping_category_id)
                 self.redis_conn.add_category_done(scraping_category_id)
@@ -82,10 +82,12 @@ class BaseSpider(scrapy.Spider):
             yield scrapy.Request(url=api,
                                 headers=headers,
                                 callback=self.parse_list_product,
-                                meta={"page": page_int, "from_cate": True, "cate_id": category_id})
+                                meta={"page": page_int, "from_cate": True, "cate_id": category_id, "from_remaining": True})
 
     def parse_list_product(self, response: Response, **kwargs: Any):
         response_body = json.loads(response.text)
+        response_body["from_remaining"] = response.meta.get("from_remaining")
+
         cate_id = response.meta.get("cate_id")
 
         if response.meta.get("from_cate") == True:
@@ -168,12 +170,15 @@ class BaseSpider(scrapy.Spider):
     def _parse_list_from_cate(self, response_body: dict, cate_id: int):
         response_paging = response_body["paging"]
         response_data = response_body.get("data")
+        from_remaining = response_body.get("from_remaining")
 
         self.category_page_limit = response_paging["last_page"]
-        self.redis_conn.set_last_page_category(cate_id=cate_id, last_page=response_paging["last_page"])
 
         if response_data == None or len(response_data) == 0:
             return
+            
+        if from_remaining != True and len(self.redis_conn.get_in_queue_pages_in_category(cate_id=cate_id)) == 0:
+            self.redis_conn.add_page_to_cate_page_set(cate_id=cate_id, last_page=response_paging["last_page"])
         
         current_page = response_paging["current_page"]
 
@@ -182,8 +187,8 @@ class BaseSpider(scrapy.Spider):
             self.redis_conn.save_scraped_product_wait_comment(spider_id=self.spider_id,
                                                               product_id=item["id"],
                                                               sp_id=item["seller_product_id"])
-            
-        self.redis_conn.add_page_to_cate_page_set(cate_id=cate_id, page=current_page)
+
+        self.redis_conn.remove_page_from_category_paging_set(cate_id=cate_id, page=current_page)
 
         for item in response_data:
             api, headers = api_headers_shop_info(seller_id=item.get("seller_id"))

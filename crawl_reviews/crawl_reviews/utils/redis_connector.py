@@ -44,40 +44,20 @@ class RedisConnector:
 
         return None
     
-    def set_last_page_category(self, cate_id: int, last_page: int):
-        self.redis_client.set(f"{self.LAST_PAGE_CATEGORY}{cate_id}", last_page)
-    
-    def get_last_page_category(self, cate_id: int) -> int:
-        result = int(self.redis_client.get(f"{self.LAST_PAGE_CATEGORY}{cate_id}"))
+    def add_page_to_cate_page_set(self, cate_id: int, last_page: int):
+        for page in range(1, last_page):
+            self.redis_client.sadd(f"{self.READY_CATEGORY_PREFIX}{cate_id}", page)
 
-        if result == None:
-            return result
-        
-        return int(result)
-    
-    def delete_last_page_category(self, cate_id: int):
-        self.redis_client.delete(f"{self.LAST_PAGE_CATEGORY}{cate_id}")
-    
-    def add_page_to_cate_page_set(self, cate_id: int, page: int):
-        self.redis_client.sadd(f"{self.READY_CATEGORY_PREFIX}{cate_id}", page)
+    def remove_page_from_category_paging_set(self, cate_id: int, page: int):
+        self.redis_client.srem(f"{self.READY_CATEGORY_PREFIX}:{cate_id}", page)
 
-        if len(self.get_scraped_pages_in_category()) == self.get_last_page_category(cate_id=cate_id):
+        if len(self.get_in_queue_pages_in_category(cate_id=cate_id)) == 0:
             self.delete_category_page_key(cate_id=cate_id)
-            self.delete_last_page_category(cate_id=cate_id)
             self.add_category_done(cate_id=cate_id)
 
-    # def remove_page_from_set(self, cate_id: int, page: int):
-    #     self.redis_client.srem(f"{self.READY_CATEGORY_PREFIX}:{cate_id}", page)
-
-    def get_scraped_pages_in_category(self, cate_id: int) -> set:
+    def get_in_queue_pages_in_category(self, cate_id: int) -> set:
         return self.redis_client.smembers(f"{self.READY_CATEGORY_PREFIX}{cate_id}")
-
-    def get_remaining_pages_in_category(self, cate_id: int) -> set:
-        scraped_pages_set = self.get_scraped_pages_in_category(cate_id=cate_id)
-        full_set = set([str(x) for x in range(1, self.get_last_page_category(cate_id=cate_id) + 1)])
-
-        return full_set - scraped_pages_set
-
+    
     def delete_category_page_key(self, cate_id: int):
         self.redis_client.delete(f"{self.READY_CATEGORY_PREFIX}{cate_id}")
 
