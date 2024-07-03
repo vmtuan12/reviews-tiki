@@ -17,6 +17,7 @@ class BaseSpider(scrapy.Spider):
     redis_client = redis_conn.get_client()
 
     category_page_limit = 50
+    limit_product_shop_per_page = 40
 
     set_shop_page = set()
     set_review_page = set()
@@ -59,7 +60,9 @@ class BaseSpider(scrapy.Spider):
         if response.meta.get("from_cate") == True:
             self._parse_list_from_cate(response_body=response_body, cate_id=cate_id)
         else:
-            self._parse_list_from_shop(response_body=response_body, cate_id=cate_id)
+            self._parse_list_from_shop(response_body=response_body,
+                                       cursor=response.meta.get("cursor"),
+                                       shop_id=response.meta.get("shop_id"))
 
         for item in response_body:
             current_review_page = 1
@@ -83,7 +86,7 @@ class BaseSpider(scrapy.Spider):
         yield generate_item(source=response_data, item_type=Shop)
 
         cursor = 0
-        limit = 40
+        limit = self.limit_product_shop_per_page
             
         self.set_shop_page.add(response_data["id"])
 
@@ -93,7 +96,7 @@ class BaseSpider(scrapy.Spider):
             yield scrapy.Request(url=api,
                                 headers=headers,
                                 callback=self.parse_list_product,
-                                meta={"from_cate": False})
+                                meta={"from_cate": False, "cursor": cursor, "shop_id": response_data["id"]})
             cursor += limit
 
         self._shop_page_remove_id(response_data["id"])
@@ -144,8 +147,15 @@ class BaseSpider(scrapy.Spider):
                                 headers=headers,
                                 callback=self.parse_shop_info)
             
-    def _parse_list_from_shop(self, response_body: dict, cate_id: int):
+    def _parse_list_from_shop(self, response_body: dict, cursor: int, shop_id: int):
         response_data = response_body.get("data")
+
+        if self.redis_conn.get_last_cursor_shop(shop_id=shop_id, spider_id=self.spider_id) == None:
+            mod = response_body.get("page").get("total") % self.limit_product_shop_per_page
+            last_cursor = response_body.get("page").get("total") - (mod if mod != 0 else self.limit_product_shop_per_page)
+            self.redis_conn.set_last_cursor_shop(shop_id=shop_id,
+                                                 spider_id=self.spider_id,
+                                                 cursor=last_cursor)
 
         if response_data == None or len(response_data) == 0:
             self._shop_page_remove_id(response_data["id"])
@@ -153,6 +163,8 @@ class BaseSpider(scrapy.Spider):
         
         for item in response_data:
             yield generate_item(source={"data": item, "from_cate": False}, item_type=Product)
+
+        self.redis_conn.add_cursor_to_shop_set(shop_id=shop_id, cursor=cursor, spider_id=self.spider_id)
 
     def _shop_page_remove_id(self, id: int):
         try:

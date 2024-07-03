@@ -8,7 +8,8 @@ class RedisConnector:
     READY_CATEGORY_PREFIX = "category-scraping-page:"
     CATEGORY_DONE = "category-done"
     CURRENT_PAGE_NUMBER_CATEGORY = "page-number:"
-    SHOP_PRODUCT_PAGE = "shop:"
+    SHOP_PRODUCT_PAGE = "shop-product:"
+    SHOP_LAST_CURSOR = "shop-last-cursor:"
     LAST_PAGE_CATEGORY = "last-page-category:"
 
     def __new__(cls):
@@ -47,10 +48,15 @@ class RedisConnector:
         self.redis_client.set(f"{self.LAST_PAGE_CATEGORY}{cate_id}", last_page)
     
     def get_last_page_category(self, cate_id: int) -> int:
-        return self.redis_client.get(f"{self.LAST_PAGE_CATEGORY}{cate_id}")
+        result = int(self.redis_client.get(f"{self.LAST_PAGE_CATEGORY}{cate_id}"))
+
+        if result == None:
+            return result
+        
+        return int(result)
     
-    def delete_last_page_category(self, cate_id: int) -> int:
-        return self.redis_client.delete(f"{self.LAST_PAGE_CATEGORY}{cate_id}")
+    def delete_last_page_category(self, cate_id: int):
+        self.redis_client.delete(f"{self.LAST_PAGE_CATEGORY}{cate_id}")
     
     def add_page_to_cate_page_set(self, cate_id: int, page: int):
         self.redis_client.sadd(f"{self.READY_CATEGORY_PREFIX}{cate_id}", page)
@@ -81,7 +87,34 @@ class RedisConnector:
     def get_scraped_product_wait_comment(self, spider_id: int) -> set:
         self.redis_client.smembers(f"{self.SCRAPED_PRODUCT_WAIT_COMMENT}{spider_id}")
 
-    def add_page_to_shop_set(self, shop_id: int, page: int):
-        self.redis_client.sadd(f"{self.SHOP_PRODUCT_PAGE}{shop_id}", page)
+    def add_cursor_to_shop_set(self, shop_id: int, spider_id: int, cursor: int):
+        self.redis_client.sadd(f"{self.SHOP_PRODUCT_PAGE}{spider_id}:{shop_id}", cursor)
+
+        len_cursor_set = len(self.get_cursor_shop_set(shop_id=shop_id, spider_id=spider_id))
+        last_cursor = self.get_last_cursor_shop(shop_id=shop_id, spider_id=spider_id)
+
+        if len_cursor_set == (last_cursor / 40 + 1):
+            self.delete_cursor_shop_set(shop_id=shop_id, spider_id=spider_id)
+            self.delete_last_cursor_shop(shop_id=shop_id, spider_id=spider_id)
+
+    def get_cursor_shop_set(self, shop_id: int, spider_id: int) -> set:
+        return self.redis_client.smembers(f"{self.SHOP_PRODUCT_PAGE}{spider_id}:{shop_id}")
+
+    def delete_cursor_shop_set(self, shop_id: int, spider_id: int):
+        self.redis_client.delete(f"{self.SHOP_PRODUCT_PAGE}{spider_id}:{shop_id}")
+
+    def set_last_cursor_shop(self, shop_id: int, spider_id: int, cursor: int):
+        self.redis_client.set(f"{self.SHOP_LAST_CURSOR}{spider_id}:{shop_id}", cursor)
+
+    def delete_last_cursor_shop(self, shop_id: int, spider_id: int):
+        self.redis_client.delete(f"{self.SHOP_LAST_CURSOR}{spider_id}:{shop_id}")
+
+    def get_last_cursor_shop(self, shop_id: int, spider_id: int) -> int | None:
+        result = self.redis_client.get(f"{self.SHOP_LAST_CURSOR}{spider_id}:{shop_id}")
+
+        if result == None:
+            return result
+        
+        return int(result)
 
     
