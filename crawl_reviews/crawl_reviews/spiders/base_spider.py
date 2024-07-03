@@ -20,16 +20,21 @@ class BaseSpider(scrapy.Spider):
     set_shop_page = set()
     set_review_page = set()
 
+    # TODO: re-design the flow
     def start_requests(self):
-        ready_scrape_page_key = self.redis_conn.get_ready_scrape_page_by_spider(self.spider_id)
+        scraping_category_id = self.redis_conn.get_scraping_category_by_spider(self.spider_id)
 
-        if ready_scrape_page_key == None:
+        if scraping_category_id == None:
             self.choose_category()
         else:
-            self.crawl_remaining()
+            ready_scrape_page_set = scraping_category_id
+            if len(ready_scrape_page_set) == 0:
+                self.redis_conn.delete_category_key(scraping_category_id)
+
+            self.crawl_remaining(ready_scrape_page_set)
 
     def choose_category(self):
-        chosen_category_id = self.redis_conn.get_list_remaining_category_id_by_spider(spider_id=self.spider_id)[0]
+        chosen_category_id = int(self.redis_conn.get_list_remaining_category_id_by_spider(spider_id=self.spider_id)[0])
         url_key = get_url_key_by_cate_id(chosen_category_id)
 
         current_page = 1
@@ -40,19 +45,20 @@ class BaseSpider(scrapy.Spider):
             yield scrapy.Request(url=api,
                                 headers=headers,
                                 callback=self.parse_list_product,
-                                meta={"page": current_page, "from_cate": True})
+                                meta={"page": current_page, "from_cate": True, "cate_id": chosen_category_id})
             current_page += 1
 
-    def crawl_remaining(self):
+    def crawl_remaining(self, ready_scrape_page_set: set):
         pass
 
     def parse_list_product(self, response: Response, **kwargs: Any):
         response_body = json.loads(response.text)
+        cate_id = response.meta.get("cate_id")
 
         if response.meta.get("from_cate") == True:
-            self._parse_list_from_cate(response_body=response_body)
+            self._parse_list_from_cate(response_body=response_body, cate_id=cate_id)
         else:
-            self._parse_list_from_shop(response_body=response_body)
+            self._parse_list_from_shop(response_body=response_body, cate_id=cate_id)
 
         for item in response_body:
             current_review_page = 1
@@ -105,8 +111,12 @@ class BaseSpider(scrapy.Spider):
             if item["comments"] != None:
                 for child in item["comments"]:
                     yield generate_item(source=child, item_type=ReviewChild)
+                    
+            self.redis_conn.delete_scraped_product_wait_comment(spider_id=self.spider_id,
+                                                              product_id=item["product_id"],
+                                                              sp_id=item["spid"])
             
-    def _parse_list_from_cate(self, response_body: dict):
+    def _parse_list_from_cate(self, response_body: dict, cate_id: int):
         response_paging = response_body["paging"]
         response_data = response_body.get("data")
 
@@ -115,8 +125,14 @@ class BaseSpider(scrapy.Spider):
         if response_data == None or len(response_data) == 0:
             return
         
+        current_page = response_paging["current_page"]
+        self.redis_conn.add_page_to_cate_page_set(cate_id=cate_id, page=current_page)
+
         for item in response_data:
             yield generate_item(source={"data": item, "from_cate": True}, item_type=Product)
+            self.redis_conn.save_scraped_product_wait_comment(spider_id=self.spider_id,
+                                                              product_id=item["id"],
+                                                              sp_id=item["seller_product_id"])
 
             api, headers = api_headers_shop_info(seller_id=item.get("seller_id"))
         
@@ -124,7 +140,9 @@ class BaseSpider(scrapy.Spider):
                                 headers=headers,
                                 callback=self.parse_shop_info)
             
-    def _parse_list_from_shop(self, response_body: dict):
+        self.redis_conn.remove_page_from_set(cate_id=cate_id, page=current_page)
+            
+    def _parse_list_from_shop(self, response_body: dict, cate_id: int):
         response_data = response_body.get("data")
 
         if response_data == None or len(response_data) == 0:
