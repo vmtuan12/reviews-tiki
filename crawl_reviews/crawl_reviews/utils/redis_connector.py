@@ -5,6 +5,7 @@ class RedisConnector:
     _instance = None
 
     SCRAPED_PRODUCT_WAIT_COMMENT = "scraped-products-wait-comment:"
+    IN_PROCESS_CATEGORY = "in-process-category"
     READY_CATEGORY_PREFIX = "category-scraping-page:"
     CATEGORY_DONE = "category-done"
     SHOP_PRODUCT_PAGE = "shop-product:"
@@ -28,11 +29,12 @@ class RedisConnector:
 
     def get_list_remaining_category_id_by_spider(self, spider_id: int) -> list:
         done_category_set = self.redis_client.smembers(self.CATEGORY_DONE)
+        in_process_category_set = self.get_category_in_process()
 
         cate_range = get_category_range(spider_id=spider_id)
         set_category = get_full_category_id(is_set=False)[cate_range[0]:cate_range[1]]
 
-        return list(set_category - done_category_set)
+        return list((set_category - done_category_set) - in_process_category_set)
     
     def get_scraping_category_by_spider(self, spider_id: int) -> int | None:
         cate_range = get_category_range(spider_id=spider_id)
@@ -44,6 +46,15 @@ class RedisConnector:
                 return int(cate_id)
 
         return None
+    
+    def add_category_to_in_process(self, cate_id: int):
+        self.redis_client.sadd(self.IN_PROCESS_CATEGORY, cate_id)
+    
+    def delete_category_from_in_process(self, cate_id: int):
+        self.redis_client.srem(self.IN_PROCESS_CATEGORY, cate_id)
+    
+    def get_category_in_process(self) -> set:
+        return self.redis_client.smembers(self.IN_PROCESS_CATEGORY)
     
     def add_page_to_cate_page_set(self, cate_id: int, last_page: int):
         for page in range(1, last_page):
@@ -64,6 +75,7 @@ class RedisConnector:
 
     def add_category_done(self, cate_id: int):
         self.redis_client.sadd(self.CATEGORY_DONE, cate_id)
+        self.delete_category_from_in_process(cate_id=cate_id)
     
     def save_scraped_product_wait_comment(self, spider_id: int, product_id: int, sp_id: int):
         self.redis_client.sadd(f"{self.SCRAPED_PRODUCT_WAIT_COMMENT}{spider_id}", f"{product_id}&{sp_id}")

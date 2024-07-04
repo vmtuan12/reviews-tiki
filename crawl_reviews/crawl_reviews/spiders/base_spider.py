@@ -16,7 +16,8 @@ class BaseSpider(scrapy.Spider):
     redis_conn = RedisConnector()
     redis_client = redis_conn.get_client()
 
-    category_page_limit = 50
+    category_page_limit = dict()
+    base_category_page_limit = 50
     limit_product_shop_per_page = 40
 
     set_shop_page = set()
@@ -45,10 +46,11 @@ class BaseSpider(scrapy.Spider):
         
         chosen_category_id = int(possible_categories[0])
         url_key = get_url_key_by_cate_id(chosen_category_id)
+        self.category_page_limit[str(chosen_category_id)] = self.base_category_page_limit
 
         current_page = 1
 
-        while (current_page <= self.category_page_limit):
+        while (current_page <= self.category_page_limit[str(chosen_category_id)]):
             api, headers = api_headers_list_item_by_category(category_id=chosen_category_id, url_key=url_key, page=current_page)
             yield scrapy.Request(url=api,
                                 headers=headers,
@@ -211,13 +213,14 @@ class BaseSpider(scrapy.Spider):
         response_data = response_body.get("data")
         from_remaining = response_body.get("from_remaining")
 
-        self.category_page_limit = response_paging["last_page"]
+        self.category_page_limit[str(cate_id)] = response_paging["last_page"]
 
         if response_data == None or len(response_data) == 0:
             return
             
         if from_remaining != True and len(self.redis_conn.get_in_queue_pages_in_category(cate_id=cate_id)) == 0:
             self.redis_conn.add_page_to_cate_page_set(cate_id=cate_id, last_page=response_paging["last_page"])
+            self.redis_conn.add_category_to_in_process(cate_id=cate_id)
         
         current_page = response_paging["current_page"]
 
