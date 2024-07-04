@@ -57,6 +57,7 @@ class BaseSpider(scrapy.Spider):
             current_page += 1
 
     def crawl_remaining(self, ready_scrape_page_set: set, category_id: int):
+        # note: product parsed but not parse comments yet
         set_remaining_product_wait_comment = self.redis_conn.get_scraped_product_wait_comment(self.spider_id)
         for product in set_remaining_product_wait_comment:
             product_id, sp_id = product.split("&")
@@ -89,6 +90,7 @@ class BaseSpider(scrapy.Spider):
                                         callback=self.parse_comment,
                                         meta={"from_remaining": True, "page": int_page})
                     
+        # note: shops which products are scraped, not done
         remaining_cursor_shops = self.redis_conn.get_remaining_cursor_shops(spider_id=self.spider_id)
         for shop_cursor in remaining_cursor_shops:
             shop_id, cursor_set = shop_cursor
@@ -101,7 +103,17 @@ class BaseSpider(scrapy.Spider):
                                     headers=headers,
                                     callback=self.parse_list_product,
                                     meta={"from_cate": False, "cursor": int_cursor, "shop_id": shop_id, "from_remaining": True})
+                
+        # note: shops which info has not been parsed
+        remaining_shops = self.redis_conn.get_wait_shop(spider_id=self.spider_id)
+        for item in remaining_shops:
+            api, headers = api_headers_shop_info(seller_id=int(item))
+        
+            yield scrapy.Request(url=api,
+                                headers=headers,
+                                callback=self.parse_shop_info)
 
+        # note: continue scrape not done pages in category
         for page in ready_scrape_page_set:
             page_int = int(page)
             api, headers = api_headers_list_item_by_category(category_id=category_id, url_key="", page=page_int)
@@ -148,6 +160,7 @@ class BaseSpider(scrapy.Spider):
         response_data = response_body["data"]["seller"]
 
         yield generate_item(source=response_data, item_type=Shop)
+        self.redis_conn.delete_wait_shop(spider_id=self.spider_id, shop_id=response_data["id"])
 
         cursor = 0
         limit = self.limit_product_shop_per_page
@@ -210,9 +223,11 @@ class BaseSpider(scrapy.Spider):
 
         for item in response_data:
             yield generate_item(source={"data": item, "from_cate": True}, item_type=Product)
+
             self.redis_conn.save_scraped_product_wait_comment(spider_id=self.spider_id,
                                                               product_id=item["id"],
                                                               sp_id=item["seller_product_id"])
+            self.redis_conn.save_wait_shop(spider_id=self.spider_id, shop_id=item.get("seller_id"))
 
         self.redis_conn.remove_page_from_category_paging_set(cate_id=cate_id, page=current_page)
 

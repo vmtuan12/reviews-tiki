@@ -11,6 +11,7 @@ class RedisConnector:
     SHOP_LAST_CURSOR = "shop-last-cursor:"
     LAST_PAGE_CATEGORY = "last-page-category:"
     IN_QUEUE_COMMENT_PAGE = "review:"
+    WAIT_SHOP = "shop-wait:"
 
     def __new__(cls):
         if cls._instance is None:
@@ -71,7 +72,16 @@ class RedisConnector:
         self.redis_client.srem(f"{self.SCRAPED_PRODUCT_WAIT_COMMENT}{spider_id}", f"{product_id}&{sp_id}")
     
     def get_scraped_product_wait_comment(self, spider_id: int) -> set:
-        self.redis_client.smembers(f"{self.SCRAPED_PRODUCT_WAIT_COMMENT}{spider_id}")
+        return self.redis_client.smembers(f"{self.SCRAPED_PRODUCT_WAIT_COMMENT}{spider_id}")
+    
+    def save_wait_shop(self, spider_id: int, shop_id: int):
+        self.redis_client.sadd(f"{self.WAIT_SHOP}{spider_id}", shop_id)
+    
+    def delete_wait_shop(self, spider_id: int, shop_id: int):
+        self.redis_client.srem(f"{self.WAIT_SHOP}{spider_id}", shop_id)
+    
+    def get_wait_shop(self, spider_id: int) -> set:
+        return self.redis_client.smembers(f"{self.WAIT_SHOP}{spider_id}")
 
     def add_cursor_to_shop_set(self, shop_id: int, spider_id: int, total: int):
         for x in range(0, total, 40):
