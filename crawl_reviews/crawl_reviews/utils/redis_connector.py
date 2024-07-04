@@ -50,7 +50,7 @@ class RedisConnector:
             self.redis_client.sadd(f"{self.READY_CATEGORY_PREFIX}{cate_id}", page)
 
     def remove_page_from_category_paging_set(self, cate_id: int, page: int):
-        self.redis_client.srem(f"{self.READY_CATEGORY_PREFIX}:{cate_id}", page)
+        self.redis_client.srem(f"{self.READY_CATEGORY_PREFIX}{cate_id}", page)
 
         if len(self.get_in_queue_pages_in_category(cate_id=cate_id)) == 0:
             self.delete_category_page_key(cate_id=cate_id)
