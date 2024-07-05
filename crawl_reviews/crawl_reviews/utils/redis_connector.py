@@ -32,7 +32,7 @@ class RedisConnector:
         in_process_category_set = self.get_category_in_process()
 
         cate_range = get_category_range(spider_id=spider_id)
-        set_category = get_full_category_id(is_set=False)[cate_range[0]:cate_range[1]]
+        set_category = set(get_full_category_id(is_set=False)[cate_range[0]:cate_range[1]])
 
         return list((set_category - done_category_set) - in_process_category_set)
     
@@ -57,7 +57,7 @@ class RedisConnector:
         return self.redis_client.smembers(self.IN_PROCESS_CATEGORY)
     
     def add_page_to_cate_page_set(self, cate_id: int, last_page: int):
-        for page in range(1, last_page):
+        for page in range(1, last_page +):
             self.redis_client.sadd(f"{self.READY_CATEGORY_PREFIX}{cate_id}", page)
 
     def remove_page_from_category_paging_set(self, cate_id: int, page: int):

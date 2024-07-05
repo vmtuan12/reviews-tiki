@@ -8,7 +8,7 @@ from scrapy.http import Request, Response
 
 class WorkerSpider0(BaseSpider):
     name = "spider-0"
-    id = 0
+    spider_id = 0
 
     def start_requests(self):
         return super().start_requests()
