@@ -22,7 +22,7 @@ def get_url_key_by_cate_id(category_id: int) -> str:
 
     return url_key
 
-def get_category_range(spider_id: int) -> tuple:
+def get_category_range(worker_id: int) -> tuple:
     """
     tuple (int, int)\n
     category id in range [start, end)
@@ -45,7 +45,7 @@ def get_category_range(spider_id: int) -> tuple:
             else:
                 chunk_size.append(len(list_cate) // NUMBER_OF_SPIDER)
     
-    return (chunk_size[spider_id], chunk_size[spider_id] + chunk_size[spider_id + 1])
+    return (chunk_size[worker_id], chunk_size[worker_id] + chunk_size[worker_id + 1])
 
 def api_headers_list_item_by_category(category_id: int | str, url_key: str, page: int, limit=40) -> tuple[str, dict, str]:
     api = f"https://tiki.vn/api/personalish/v1/blocks/listings?limit={limit}&include=advertisement&aggregations=2&version=home-persionalized&urlKey={url_key}&category={category_id}&page={page}"

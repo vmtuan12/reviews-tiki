@@ -49,7 +49,7 @@ class RedisConnector:
 
     def get_list_remaining_category_id_by_worker(self, worker_id: int) -> list:
         done_category_set = self.redis_client.smembers(self.CATEGORY_DONE)
-        in_process_category_set = self.get_category_in_process()
+        in_process_category_set = self.redis_client.smembers(self.IN_PROCESS_CATEGORY + str(worker_id))
 
         cate_range = get_category_range(worker_id=worker_id)
         set_category = set(get_full_category_id(is_set=False)[cate_range[0]:cate_range[1]])
@@ -63,11 +63,11 @@ class RedisConnector:
         return f"{product_id}&{spid}" in self.redis_client.smembers(self.DONE_PRODUCT)
     
     def add_scraped_product_wait_shop(self, shop_id: int, product_id: int, spid: int):
-        self.redis_client.set(self.SCRAPED_PRODUCT_WAIT_SHOP + shop_id, f"{product_id}&{spid}")
+        self.redis_client.set(self.SCRAPED_PRODUCT_WAIT_SHOP + str(shop_id), f"{product_id}&{spid}")
     
     def remove_scraped_product_wait_shop(self, shop_id: int):
-        info = self.redis_client.get(self.SCRAPED_PRODUCT_WAIT_SHOP + shop_id).split("&")
-        self.redis_client.delete(self.SCRAPED_PRODUCT_WAIT_SHOP + shop_id)
+        info = self.redis_client.get(self.SCRAPED_PRODUCT_WAIT_SHOP + str(shop_id)).split("&")
+        self.redis_client.delete(self.SCRAPED_PRODUCT_WAIT_SHOP + str(shop_id))
         self._check_product_has_done(product_id=int(info[0]), spid=int(info[1]))
     
     def add_scraped_product_wait_review(self, product_id: int, spid: int):
