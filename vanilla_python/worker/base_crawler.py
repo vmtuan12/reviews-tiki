@@ -215,3 +215,4 @@ class BaseWorker:
     def produce_to_kafka(self, msg: dict, topic: str):
         self.producer.send(topic, value=msg)
         self.producer.flush()
+        print(msg)
