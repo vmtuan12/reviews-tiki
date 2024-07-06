@@ -7,13 +7,15 @@ class RedisConnector:
     CATEGORY_DONE = "category-done"
     IN_PROCESS_CATEGORY = "in-process-category:"
     DONE_PRODUCT = "done-product"
-    SCRAPED_PRODUCT_WAIT_SHOP = "scraped-product-wait-shop"
+    SCRAPED_PRODUCT_WAIT_SHOP = "scraped-product-wait-shop:"
     SCRAPED_PRODUCT_WAIT_REVIEW = "scraped-product-wait-review"
     SCRAPED_SHOP_WAIT_PRODUCT = "scraped-shop-wait-product"
 
     CATEGORY_TOTAL_PAGES = "category-total-page:"
     REVIEW_TOTAL_PAGES = "review-total-page:"
     SHOP_PRODUCT_CURSORS = "shop-product-cursor:"
+
+    DONE_SHOP = "done-shop"
 
     def __new__(cls):
         if cls._instance is None:
@@ -60,12 +62,13 @@ class RedisConnector:
     def product_has_done(self, product_id: int, spid: int) -> bool:
         return f"{product_id}&{spid}" in self.redis_client.smembers(self.DONE_PRODUCT)
     
-    def add_scraped_product_wait_shop(self, product_id: int, spid: int):
-        self.redis_client.sadd(self.SCRAPED_PRODUCT_WAIT_SHOP, f"{product_id}&{spid}")
+    def add_scraped_product_wait_shop(self, shop_id: int, product_id: int, spid: int):
+        self.redis_client.set(self.SCRAPED_PRODUCT_WAIT_SHOP + shop_id, f"{product_id}&{spid}")
     
-    def remove_scraped_product_wait_shop(self, product_id: int, spid: int):
-        self.redis_client.srem(self.SCRAPED_PRODUCT_WAIT_SHOP, f"{product_id}&{spid}")
-        self._check_product_has_done(product_id=product_id, spid=spid)
+    def remove_scraped_product_wait_shop(self, shop_id: int):
+        info = self.redis_client.get(self.SCRAPED_PRODUCT_WAIT_SHOP + shop_id).split("&")
+        self.redis_client.delete(self.SCRAPED_PRODUCT_WAIT_SHOP + shop_id)
+        self._check_product_has_done(product_id=int(info[0]), spid=int(info[1]))
     
     def add_scraped_product_wait_review(self, product_id: int, spid: int):
         self.redis_client.sadd(self.SCRAPED_PRODUCT_WAIT_REVIEW, f"{product_id}&{spid}")
@@ -73,12 +76,28 @@ class RedisConnector:
     def remove_scraped_product_wait_review(self, product_id: int, spid: int):
         self.redis_client.srem(self.SCRAPED_PRODUCT_WAIT_REVIEW, f"{product_id}&{spid}")
         self._check_product_has_done(product_id=product_id, spid=spid)
+    
+    def product_in_scraped_product_wait_review(self, product_id: int, spid: int) -> bool:
+        return f"{product_id}&{spid}" in self.redis_client.smembers(self.SCRAPED_PRODUCT_WAIT_REVIEW)
         
     def add_shop_wait_product(self, shop_id: int):
         self.redis_client.sadd(self.SCRAPED_SHOP_WAIT_PRODUCT, shop_id)
+        
+    def shop_waiting_product(self, shop_id: int) -> bool:
+        return shop_id in self.redis_client.sadd(self.SCRAPED_SHOP_WAIT_PRODUCT)
     
     def remove_shop_wait_product(self, shop_id: int):
         self.redis_client.srem(self.SCRAPED_SHOP_WAIT_PRODUCT, shop_id)
+        self.add_shop_done(shop_id=shop_id)
+        
+    def add_shop_done(self, shop_id: int):
+        self.redis_client.sadd(self.DONE_SHOP, shop_id)
+    
+    def shop_can_be_scraped(self, shop_id: int):
+        shop_wait_set = self.redis_client.smembers(self.SCRAPED_SHOP_WAIT_PRODUCT)
+        shop_done_set = self.redis_client.smembers(self.DONE_SHOP)
+
+        return (shop_id not in shop_wait_set) and (shop_id not in shop_done_set)
 
     def set_category_total_pages(self, cate_id: int, last_page: int):
         for page in range(1, last_page + 1):
@@ -90,6 +109,9 @@ class RedisConnector:
     def set_review_total_pages(self, product_id: int, spid: int, last_page: int):
         for page in range(1, last_page + 1):
             self.redis_client.sadd(f"{self.REVIEW_TOTAL_PAGES}{product_id}_{spid}", page)
+
+    def get_review_total_pages(self, product_id: int, spid: int) -> set:
+        return self.redis_client.smembers(f"{self.REVIEW_TOTAL_PAGES}{product_id}_{spid}")
 
     def remove_page_in_review_total_pages(self, product_id: int, spid: int, page: int):
         self.redis_client.srem(f"{self.REVIEW_TOTAL_PAGES}{product_id}_{spid}", page)
@@ -106,6 +128,9 @@ class RedisConnector:
 
         return list_cursor
 
+    def get_shop_total_cursors(self, shop_id: int) -> set:
+        return self.redis_client.smembers(f"{self.SHOP_PRODUCT_CURSORS}{shop_id}")
+
     def remove_cursor_in_shop_total_cursor(self, shop_id: int, cursor: int):
         self.redis_client.srem(f"{self.SHOP_PRODUCT_CURSORS}{shop_id}", cursor)
 
@@ -113,9 +138,14 @@ class RedisConnector:
             self.delete_key(f"{self.SHOP_PRODUCT_CURSORS}{shop_id}")
             self.remove_shop_wait_product(shop_id=shop_id)
 
-    def _check_product_has_done(self, product_id: int, spid: int):
-        not_in_wait_shop = f"{product_id}&{spid}" in self.redis_client.smembers(self.SCRAPED_PRODUCT_WAIT_SHOP)
-        not_in_wait_review = f"{product_id}&{spid}" in self.redis_client.smembers(self.SCRAPED_PRODUCT_WAIT_REVIEW)
+    def product_has_been_produced(self, product_id: int, spid: int) -> bool:
+        in_wait_review = f"{product_id}&{spid}" in self.redis_client.smembers(self.SCRAPED_PRODUCT_WAIT_REVIEW)
+        in_done = f"{product_id}&{spid}" in self.redis_client.smembers(self.DONE_PRODUCT)
 
-        if (not_in_wait_review == True) and (not_in_wait_shop == True):
+        return (in_wait_review == True) or (in_done == True)
+
+    def _check_product_has_done(self, product_id: int, spid: int):
+        not_in_wait_review = f"{product_id}&{spid}" not in self.redis_client.smembers(self.SCRAPED_PRODUCT_WAIT_REVIEW)
+
+        if (not_in_wait_review == True):
             self.add_done_product(product_id=product_id, spid=spid)
