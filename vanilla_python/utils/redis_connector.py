@@ -62,20 +62,6 @@ class RedisConnector:
             self.add_category_done(cate_id=cate_id, worker_id=worker_id)
             self.delete_key(key=key)
 
-    def set_review_total_pages(self, product_id: int, spid: int, last_page: int):
-        for page in range(1, last_page + 1):
-            self.redis_client.sadd(f"{self.REVIEW_TOTAL_PAGES}{product_id}_{spid}", page)
-
-    def get_review_total_pages(self, product_id: int, spid: int) -> set:
-        return self.redis_client.smembers(f"{self.REVIEW_TOTAL_PAGES}{product_id}_{spid}")
-
-    def remove_page_in_review_total_pages(self, product_id: int, spid: int, page: int):
-        self.redis_client.srem(f"{self.REVIEW_TOTAL_PAGES}{product_id}_{spid}", page)
-
-        if len(self.redis_client.smembers(f"{self.REVIEW_TOTAL_PAGES}{product_id}_{spid}")) == 0:
-            self.delete_key(f"{self.REVIEW_TOTAL_PAGES}{product_id}_{spid}")
-            self.remove_scraped_product_wait_review(product_id=product_id, spid=spid)
-
     def set_shop_total_cursors(self, shop_id: int, last_item: int) -> list:
         list_cursor = []
         for x in range(0, last_item, 40):
@@ -86,6 +72,9 @@ class RedisConnector:
 
     def get_shop_total_cursors(self, shop_id: int) -> set:
         return self.redis_client.smembers(f"{self.SHOP_PRODUCT_CURSORS}{shop_id}")
+    
+    def shop_has_total_cursor(self, shop_id: int) -> bool:
+        return self.redis_client.exists(f"{self.SHOP_PRODUCT_CURSORS}{shop_id}") == 1
 
     def remove_cursor_in_shop_total_cursor(self, shop_id: int, cursor: int):
         key = f"{self.SHOP_PRODUCT_CURSORS}{shop_id}"
@@ -129,18 +118,33 @@ class RedisConnector:
         set_product_done_review = self.get_set_product_done_review()
 
         return partition - set_product_done_review
+
+    def set_review_total_pages(self, product_id: int, spid: int, last_page: int):
+        for page in range(1, last_page + 1):
+            self.redis_client.sadd(f"{self.REVIEW_TOTAL_PAGES}{product_id}_{spid}", page)
+
+    def get_review_total_pages(self, product_id: int, spid: int) -> set:
+        return self.redis_client.smembers(f"{self.REVIEW_TOTAL_PAGES}{product_id}_{spid}")
+
+    def product_has_review_total_pages(self, product_id: int, spid: int) -> bool:
+        return self.redis_client.exists(f"{self.REVIEW_TOTAL_PAGES}{product_id}_{spid}") == 1
+
+    def remove_page_in_review_total_pages(self, product_id: int, spid: int, page: int):
+        key = f"{self.REVIEW_TOTAL_PAGES}{product_id}_{spid}"
+        self.redis_client.srem(key, page)
+
+        if len(self.redis_client.smembers(key)) == 0:
+            self.delete_key(key)
+            self.add_product_done_review(product_id=product_id, spid=spid)
         
-    def add_product_done_review(self, product_id: int):
-        self.redis_client.sadd(self.PRODUCT_DONE_REVIEWS, product_id)
+    def add_product_done_review(self, product_id: int, spid: int):
+        self.redis_client.sadd(self.PRODUCT_DONE_REVIEWS, f"{product_id}&{spid}")
         
     def get_set_product_done_review(self) -> set:
         return self.redis_client.smembers(self.PRODUCT_DONE_REVIEWS)
-
-    def _check_product_has_done(self, product_id: int, spid: int):
-        not_in_wait_review = f"{product_id}&{spid}" not in self.redis_client.smembers(self.SCRAPED_PRODUCT_WAIT_REVIEW)
-
-        if (not_in_wait_review == True):
-            self.add_done_product(product_id=product_id, spid=spid)
+        
+    def product_has_done_review(self, product_id: int, spid: int) -> bool:
+        return f"{product_id}&{spid}" in self.redis_client.smembers(self.PRODUCT_DONE_REVIEWS)
 
     def _choose_partition(self, worker_id: int, data_list: list) -> list:
         """

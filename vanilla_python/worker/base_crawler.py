@@ -92,12 +92,31 @@ class BaseWorker:
             url_headers_type = api_headers_shop_info(seller_id=shop_id)
             self.crawl_queue.put(url_headers_type)
 
-    def __request_reviews(self)
+    def __request_reviews(self):
+        product_partition = self.redis_conn.get_product_wait_review_set_by_worker(worker_id=self.id)
+        if len(product_partition) == 0:
+            return
+        
+        for product in product_partition:
+            product_info = product.split("&")
+            product_id, spid = int(product_info[0]), int(product_info[1])
 
-        for shop in remaining_shop:
-            shop_id = int(shop)
-            url_headers_type = api_headers_shop_info(seller_id=shop_id)
-            self.crawl_queue.put(url_headers_type)
+            pages = set()
+            if self.redis_conn.product_has_done_review(product_id=product_id, spid=spid):
+                continue
+            elif self.redis_conn.product_has_review_total_pages(product_id=product_id, spid=spid):
+                pages = self.redis_conn.get_review_total_pages(product_id=product_id, spid=spid)
+            else:
+                url_headers_type_review_init = api_headers_reviews(product_id=product_id, spid=spid, page=1)
+                last_page = self._init_pages(url_headers_type=url_headers_type_review_init, 
+                                             type="REVIEW", 
+                                             metadata={ "product_id": product_id, "spid": spid })
+                pages = [x for x in range(1, last_page + 1)]
+
+            for p in pages:
+                page_int = int(p)
+                url_headers_type_review = api_headers_reviews(product_id=product_id, spid=spid, page=page_int)
+                self.crawl_queue.put(url_headers_type_review)
 
     def _init_pages(self, url_headers_type: tuple, type: str, metadata: dict) -> int | list:
         url, headers = url_headers_type[0], url_headers_type[1]
@@ -215,15 +234,16 @@ class BaseWorker:
         if self.redis_conn.shop_can_be_scraped(shop_id=shop_id):
             self.produce_to_kafka(msg=parsed_shop, topic=self.topic_shop)
 
-            url_header_type_init = api_headers_list_product_in_shop(shop_id=parsed_shop["id"], cursor=0)
-            list_cursor = self._init_pages(url_headers_type=url_header_type_init, type="SHOP", metadata={ "shop_id": parsed_shop["id"] })
-        
-        else:
-            list_cursor = self.redis_conn.get_shop_total_cursors(shop_id=shop_id)
+            if self.redis_conn.shop_has_total_cursor(shop_id=shop_id):
+                list_cursor = self.redis_conn.get_shop_total_cursors(shop_id=shop_id)
+            else:                
+                url_header_type_init = api_headers_list_product_in_shop(shop_id=parsed_shop["id"], cursor=0)
+                list_cursor = self._init_pages(url_headers_type=url_header_type_init, type="SHOP", metadata={ "shop_id": parsed_shop["id"] })
+            
 
-        for cursor in list_cursor:
-            api_headers_type = api_headers_list_product_in_shop(shop_id=parsed_shop["id"], cursor=int(cursor))
-            self.crawl_queue.put(api_headers_type)
+            for cursor in list_cursor:
+                api_headers_type = api_headers_list_product_in_shop(shop_id=parsed_shop["id"], cursor=int(cursor))
+                self.crawl_queue.put(api_headers_type)
 
     def _parse_review(self, response_data: dict, url: str):
         data = response_data["data"]
