@@ -1,6 +1,8 @@
 from redis import Redis
 from utils.tiki_utils import get_full_category_id, get_category_range
 
+NUMBER_OF_WORKER = 5
+
 class RedisConnector:
     _instance = None
 
@@ -15,7 +17,10 @@ class RedisConnector:
     REVIEW_TOTAL_PAGES = "review-total-page:"
     SHOP_PRODUCT_CURSORS = "shop-product-cursor:"
 
+    SCRAPED_PRODUCT = "scraped-product"
     DONE_SHOP = "done-shop"
+    SHOP_WAITING = "shop-waiting"
+    PRODUCT_DONE_REVIEWS = "scraped-product-done-reviews"
 
     def __new__(cls):
         if cls._instance is None:
@@ -30,81 +35,32 @@ class RedisConnector:
     def close(self):
         self.redis_client.close()
 
-    def delete_key(self, key):
+    def delete_key(self, key: str):
         self.redis_client.delete(key)
-
-    def add_in_process_category(self, worker_id: int, cate_id: int):
-        self.redis_client.sadd(self.IN_PROCESS_CATEGORY + str(worker_id), cate_id)
-
-    def get_one_in_process_category_id(self, worker_id: int) -> int | None:
-        ids = self.redis_client.smembers(self.IN_PROCESS_CATEGORY + str(worker_id))
-        for id in ids:
-            return id
-        
-        return None
 
     def add_category_done(self, cate_id: int, worker_id: int):
         self.redis_client.sadd(self.CATEGORY_DONE, cate_id)
-        self.redis_client.srem(self.IN_PROCESS_CATEGORY + str(worker_id), cate_id)
 
-    def get_list_remaining_category_id_by_worker(self, worker_id: int) -> list:
+    def get_list_remaining_category_id_by_worker(self, worker_id: int) -> set:
         done_category_set = self.redis_client.smembers(self.CATEGORY_DONE)
-        in_process_category_set = self.redis_client.smembers(self.IN_PROCESS_CATEGORY + str(worker_id))
 
         cate_range = get_category_range(worker_id=worker_id)
         set_category = set(get_full_category_id(is_set=False)[cate_range[0]:cate_range[1]])
 
-        return list((set_category - done_category_set) - in_process_category_set)
-    
-    def add_done_product(self, product_id: int, spid: int):
-        self.redis_client.sadd(self.DONE_PRODUCT, f"{product_id}&{spid}")
-    
-    def product_has_done(self, product_id: int, spid: int) -> bool:
-        return f"{product_id}&{spid}" in self.redis_client.smembers(self.DONE_PRODUCT)
-    
-    def add_scraped_product_wait_shop(self, shop_id: int, product_id: int, spid: int):
-        self.redis_client.set(self.SCRAPED_PRODUCT_WAIT_SHOP + str(shop_id), f"{product_id}&{spid}")
-    
-    def remove_scraped_product_wait_shop(self, shop_id: int):
-        info = self.redis_client.get(self.SCRAPED_PRODUCT_WAIT_SHOP + str(shop_id)).split("&")
-        self.redis_client.delete(self.SCRAPED_PRODUCT_WAIT_SHOP + str(shop_id))
-        self._check_product_has_done(product_id=int(info[0]), spid=int(info[1]))
-    
-    def add_scraped_product_wait_review(self, product_id: int, spid: int):
-        self.redis_client.sadd(self.SCRAPED_PRODUCT_WAIT_REVIEW, f"{product_id}&{spid}")
-    
-    def remove_scraped_product_wait_review(self, product_id: int, spid: int):
-        self.redis_client.srem(self.SCRAPED_PRODUCT_WAIT_REVIEW, f"{product_id}&{spid}")
-        self._check_product_has_done(product_id=product_id, spid=spid)
-    
-    def product_in_scraped_product_wait_review(self, product_id: int, spid: int) -> bool:
-        return f"{product_id}&{spid}" in self.redis_client.smembers(self.SCRAPED_PRODUCT_WAIT_REVIEW)
-        
-    def add_shop_wait_product(self, shop_id: int):
-        self.redis_client.sadd(self.SCRAPED_SHOP_WAIT_PRODUCT, shop_id)
-        
-    def shop_waiting_product(self, shop_id: int) -> bool:
-        return shop_id in self.redis_client.sadd(self.SCRAPED_SHOP_WAIT_PRODUCT)
-    
-    def remove_shop_wait_product(self, shop_id: int):
-        self.redis_client.srem(self.SCRAPED_SHOP_WAIT_PRODUCT, shop_id)
-        self.add_shop_done(shop_id=shop_id)
-        
-    def add_shop_done(self, shop_id: int):
-        self.redis_client.sadd(self.DONE_SHOP, shop_id)
-    
-    def shop_can_be_scraped(self, shop_id: int):
-        shop_wait_set = self.redis_client.smembers(self.SCRAPED_SHOP_WAIT_PRODUCT)
-        shop_done_set = self.redis_client.smembers(self.DONE_SHOP)
-
-        return (shop_id not in shop_wait_set) and (shop_id not in shop_done_set)
+        return set_category - done_category_set
 
     def set_category_total_pages(self, cate_id: int, last_page: int):
         for page in range(1, last_page + 1):
             self.redis_client.sadd(f"{self.CATEGORY_TOTAL_PAGES}{cate_id}", page)
 
-    def remove_page_in_category_total_pages(self, cate_id: int, page: int):
-        self.redis_client.srem(f"{self.CATEGORY_TOTAL_PAGES}{cate_id}", page)
+    def remove_page_in_category_total_pages(self, worker_id: int, cate_id: int, page: int):
+        key = f"{self.CATEGORY_TOTAL_PAGES}{cate_id}"
+
+        self.redis_client.srem(key, page)
+
+        if len(self.redis_client.smembers(key)) == 0:
+            self.add_category_done(cate_id=cate_id, worker_id=worker_id)
+            self.delete_key(key=key)
 
     def set_review_total_pages(self, product_id: int, spid: int, last_page: int):
         for page in range(1, last_page + 1):
@@ -132,20 +88,77 @@ class RedisConnector:
         return self.redis_client.smembers(f"{self.SHOP_PRODUCT_CURSORS}{shop_id}")
 
     def remove_cursor_in_shop_total_cursor(self, shop_id: int, cursor: int):
-        self.redis_client.srem(f"{self.SHOP_PRODUCT_CURSORS}{shop_id}", cursor)
+        key = f"{self.SHOP_PRODUCT_CURSORS}{shop_id}"
 
-        if len(self.redis_client.smembers(f"{self.SHOP_PRODUCT_CURSORS}{shop_id}")) == 0:
-            self.delete_key(f"{self.SHOP_PRODUCT_CURSORS}{shop_id}")
-            self.remove_shop_wait_product(shop_id=shop_id)
+        self.redis_client.srem(key, cursor)
+
+        if len(self.redis_client.smembers(key)) == 0:
+            self.delete_key(key)
+            self.add_shop_done(shop_id=shop_id)
 
     def product_has_been_produced(self, product_id: int, spid: int) -> bool:
-        in_wait_review = f"{product_id}&{spid}" in self.redis_client.smembers(self.SCRAPED_PRODUCT_WAIT_REVIEW)
-        in_done = f"{product_id}&{spid}" in self.redis_client.smembers(self.DONE_PRODUCT)
+        return f"{product_id}&{spid}" in self.redis_client.smembers(self.SCRAPED_PRODUCT)
+    
+    def add_scraped_product(self, product_id: int, spid: int):
+        self.redis_client.sadd(self.SCRAPED_PRODUCT, f"{product_id}&{spid}")
+    
+    def get_full_scraped_product(self) -> set:
+        return self.redis_client.smembers(self.SCRAPED_PRODUCT)
+    
+    def add_shop_waiting(self, shop_id: int):
+        self.redis_client.sadd(self.SHOP_WAITING, shop_id)
+    
+    def get_set_shop_from_shop_waiting_by_worker(self, worker_id: int) -> set:
+        list_shop = list(self.redis_client.smembers(self.SHOP_WAITING))
+        chosen = set(self._choose_partition(worker_id=worker_id, data_list=list_shop))
 
-        return (in_wait_review == True) or (in_done == True)
+        done_shop = self.redis_client.smembers(self.DONE_SHOP)
+
+        return chosen - done_shop
+        
+    def add_shop_done(self, shop_id: int):
+        self.redis_client.sadd(self.DONE_SHOP, shop_id)
+    
+    def shop_can_be_scraped(self, shop_id: int):
+        return shop_id not in self.redis_client.smembers(self.DONE_SHOP)
+
+    def get_product_wait_review_set_by_worker(self, worker_id: int) -> set:
+        full_list_product = list(self.get_full_scraped_product())
+        partition = set(self._choose_partition(worker_id=worker_id, data_list=full_list_product))
+
+        set_product_done_review = self.get_set_product_done_review()
+
+        return partition - set_product_done_review
+        
+    def add_product_done_review(self, product_id: int):
+        self.redis_client.sadd(self.PRODUCT_DONE_REVIEWS, product_id)
+        
+    def get_set_product_done_review(self) -> set:
+        return self.redis_client.smembers(self.PRODUCT_DONE_REVIEWS)
 
     def _check_product_has_done(self, product_id: int, spid: int):
         not_in_wait_review = f"{product_id}&{spid}" not in self.redis_client.smembers(self.SCRAPED_PRODUCT_WAIT_REVIEW)
 
         if (not_in_wait_review == True):
             self.add_done_product(product_id=product_id, spid=spid)
+
+    def _choose_partition(self, worker_id: int, data_list: list) -> list:
+        """
+        tuple (int, int)\n
+        category id in range [start, end)
+        """
+
+        mod = len(data_list) % NUMBER_OF_WORKER
+
+        chunk_size = [0]
+        if mod == 0:
+            chunk_size += [len(data_list) / NUMBER_OF_WORKER for _ in range(NUMBER_OF_WORKER)]
+        else:
+            for _ in range(NUMBER_OF_WORKER):
+                if mod != 0:
+                    chunk_size.append((len(data_list) // NUMBER_OF_WORKER) + 1)
+                    mod -= 1
+                else:
+                    chunk_size.append(len(data_list) // NUMBER_OF_WORKER)
+        
+        return data_list[chunk_size[worker_id]:(chunk_size[worker_id] + chunk_size[worker_id + 1])]
