@@ -10,6 +10,8 @@ import time
 from kafka import KafkaProducer
 import json
 from urllib.parse import urlparse, parse_qs
+from utils.log_writer import write_log
+import traceback
 
 class BaseWorker:
  
@@ -36,13 +38,14 @@ class BaseWorker:
     def run_web_crawler(self):
         while True:
             try:
-                url_headers_type = self.crawl_queue.get(timeout=120)
+                url_headers_type = self.crawl_queue.get(timeout=360)
                 url = url_headers_type[0]
                 if url not in self.scraped_pages:
                     print("Scraping URL: {}".format(url))
                     self.scraped_pages.add(url)
 
                     job = self.pool.submit(self._scrape_page, url_headers_type)
+                    print(f"Submitted: {url}")
                     job.add_done_callback(self._post_scrape_callback)
                     time.sleep(0.5)
  
@@ -52,7 +55,7 @@ class BaseWorker:
                 return
             except Exception as e:
                 print(e)
-                continue
+                return
 
     def _start_requests(self):
         self.current_category_id = self.redis_conn.get_one_in_process_category_id(self.id)
@@ -74,11 +77,17 @@ class BaseWorker:
 
     def _init_pages(self, url_headers_type: tuple, type: str, metadata: dict) -> int | list:
         url, headers = url_headers_type[0], url_headers_type[1]
+        proxy = get_proxy()
         while (True):
-            req = requests.get(url, headers=headers)
+            req = requests.get(url, headers=headers, proxies=proxy)
 
             if req.status_code == 200:
-                res: dict = json.loads(req.text)
+                try:
+                    res: dict = json.loads(req.text)
+                except Exception:
+                    err = traceback.format_exc() + "\n" + url + "\n" + req.text
+                    write_log(err=err, file_name="init_pages.log")
+                    raise Exception()
 
                 if type == "CATEGORY" or type == "REVIEW":
                     pages = res.get("paging").get("last_page")
@@ -107,6 +116,7 @@ class BaseWorker:
         proxy = get_proxy()
         try:
             res = requests.get(url, headers=headers, proxies=proxy)
+            print(res)
             return (res, url, url_type)
         except requests.RequestException:
             return
@@ -124,15 +134,18 @@ class BaseWorker:
         if request_type == PRODUCT:
             self._parse_product(response_data, url=url)
         elif request_type == SHOP:
-            self._parse_shop(response_data)
+            self._parse_shop(response_data, url=url)
         elif request_type == REVIEW:
-            self._parse_review(response_data)
+            self._parse_review(response_data, url=url)
 
     def _parse_product(self, response_data: dict, url: str):
         data = response_data["data"]
 
         for item in data:
             parsed_item = generate_item(source=item, item_type=PRODUCT)
+
+            if parsed_item == None:
+                continue
 
             shop_id = parsed_item["shop_id"]
             product_id = parsed_item["id"]
@@ -150,7 +163,8 @@ class BaseWorker:
 
             else:
                 api_header_type_init_review = api_headers_reviews(product_id=product_id, spid=spid, page=1)
-                pages = self._init_pages(url_headers_type=api_header_type_init_review, type="REVIEW", metadata={ "product_id": product_id, "spid": spid })
+                last_page = self._init_pages(url_headers_type=api_header_type_init_review, type="REVIEW", metadata={ "product_id": product_id, "spid": spid })
+                pages = [x for x in range(1, last_page + 1)]
 
                 self.redis_conn.add_scraped_product_wait_review(product_id=product_id, spid=spid)
 
@@ -171,7 +185,10 @@ class BaseWorker:
     def _parse_shop(self, response_data: dict, url: str):
         data = response_data["data"]
 
-        parsed_shop = generate_item(data["seller"], type=SHOP)
+        parsed_shop = generate_item(data["seller"], item_type=SHOP)
+
+        if parsed_shop == None:
+            return
         
         shop_id = parsed_shop["id"]
 
@@ -197,6 +214,7 @@ class BaseWorker:
         for item in data:
             parsed_review = generate_item(source=item, item_type=REVIEW)
             self.produce_to_kafka(msg=parsed_review, topic=self.topic_review)
+            print(parsed_review)
 
             user = generate_item(source=item["created_by"], item_type=USER)
             self.produce_to_kafka(msg=user, topic=self.topic_user)
@@ -212,7 +230,10 @@ class BaseWorker:
                                                           spid=int(query_dict["spid"][0]),
                                                           page=response_data["paging"]["current_page"])
 
-    def produce_to_kafka(self, msg: dict, topic: str):
+    def produce_to_kafka(self, msg: dict | None, topic: str):
+        if msg == None:
+            return
+        
         self.producer.send(topic, value=msg)
         self.producer.flush()
-        print(msg)
+        # print(msg)

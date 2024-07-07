@@ -1,4 +1,7 @@
 from datetime import date, timedelta
+import traceback
+from utils.log_writer import write_log
+import json
 
 PRODUCT = "Product"
 SHOP = "Shop"
@@ -8,17 +11,24 @@ USER = "User"
 
 BASE_URL = "https://tiki.vn/"
 
-def generate_item(source: dict, item_type: str) -> dict:
-    if item_type == "Product":
-        return product(source)
-    elif item_type == "Shop":
-        return shop(source)
-    elif item_type == "Review":
-        return review(source)
-    elif item_type == "ReviewChild":
-        return review_child(source)
-    else:
-        return user(source)
+def generate_item(source: dict, item_type: str) -> dict | None:
+    try:
+        if item_type == "Product":
+            return product(source)
+        elif item_type == "Shop":
+            return shop(source)
+        elif item_type == "Review":
+            return review(source)
+        elif item_type == "ReviewChild":
+            return review_child(source)
+        else:
+            return user(source)
+        
+    except Exception as e:
+        err = traceback.format_exc() + "\n" + json.dumps(source)
+        write_log(err=err, file_name="generate_item.log")
+
+        return None
     
 def _handle_exception_retrieving_value(data, *args):
     if len(args) == 0:
@@ -90,7 +100,7 @@ def user(source: dict) -> dict:
     result["name"] = source["name"]
     result["total_review_written"] = _handle_exception_retrieving_value(source, "contribute_info", "summary", "total_review")
     result["total_like_received"] = _handle_exception_retrieving_value(source, "contribute_info", "summary", "total_thank")
-    result["join_time"] = source["created_time"]
+    result["join_time"] = _handle_exception_retrieving_value(source, "created_time")
 
     return result
 
